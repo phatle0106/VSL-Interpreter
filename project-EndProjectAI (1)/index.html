@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bright Of Sign</title>
+    <link rel="stylesheet" href="/project-EndProjectAI/assets/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.0/css/all.min.css" integrity="sha512-DxV+EoADOkOygM4IR9yXP8Sb2qwgidEmeqAEmDKIOfPRQZOWbXCzLC6vjbZyy0vPisbH2SyW27+ddLVCN+OMzQ==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+</head>
+
+<body> 
+    <!-- Nút Setting -->
+    <div class="menu-setting">
+    <button class="btn" id="toggle-setting"><i class="fa-solid fa-gear"></i></button>
+
+    <!-- Danh sách các lựa chọn trong menu Setting -->
+    <div class="dropdown hidden" id="setting-options">
+        <button class="btn" id="option-upload-video">
+            <span class="btnUploadVideo">Upload Video</span>
+            <span class="status-dot" id="upload-dot"></span> 
+        </button>
+        <button class="btn" id="option-show-keypoints">Show Keypoints (Off)</button>
+    </div>
+    </div>
+
+    <!-- Section Show Keypoints (ẩn mặc định) -->
+    <section class="keypoints-container hidden" id="keypoints-display">
+
+</section>
+    <div class="shell">
+        <!-- Left: video -->
+        <div class="container">
+            <section class="video-card">
+                <div class="video-header">
+                    <div class="video-title"><span class="dot" id="video-dot" aria-hidden="true"></span> <span>Camera</span></div>
+                    <div class="badges"><span class="badge" id="badge-video">Not playing</span></div>
+                    <button class="btn" id="btn-send-frame">Send to AI</button>
+                </div>
+                <div class="video-wrap">
+                    <video id="video" autoplay playsinline muted></video>
+                    <canvas id="canvas" aria-hidden="true"></canvas>
+                </div>
+            </section>
+        
+            <section class="file-container video-card hidden" id="video-upload-section">
+                <div class="actions-file">
+                    <label for="video-file">Choose File</label>
+                    <input type="file" id="video-file" accept="video/*" />
+                    <button class="btn" id="btn-upload-video">Send video</button>
+                </div>
+                <div class ="upload-status" id="upload-status"></div>
+            </section>
+        </div>
+        
+
+        <!-- Right: chat -->
+        <main class="card" role="application">
+        <header>
+            <button class="btn" id="toggleCamBtn">Turn on camera</button>
+            <div class="actions">
+                <button id="btn-ws" class="btn">Connect WS</button>
+                <button id="btn-demo" class="btn primary">Demo</button>
+            </div>
+        </header>
+        <section id="messages" class="messages" aria-live="polite"></section>
+        <form id="composer" autocomplete="off"></form>
+        <div class="hint" id="hint">Đang chờ AI…</div>
+        </main>
+    </div>
+    
+    <!-- Thư viện MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
+
+    <script src="script.js"></script>
+    </body>
+</html>
