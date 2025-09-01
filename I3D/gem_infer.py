@@ -11,6 +11,8 @@ import time
 from collections import Counter
 import os
 from dotenv import load_dotenv
+import requests
+from threading import Thread
 
 # Thêm Mediapipe
 import mediapipe as mp
@@ -19,6 +21,9 @@ import mediapipe as mp
 # CẢNH BÁO BẢO MẬT QUAN TRỌNG
 # =============================================================================
 load_dotenv()
+
+# Khai báo URL của T5 container (map ra localhost:5001)
+T5_URL = os.getenv("T5_URL", "http://localhost:5001/generate_sentence")
 
 # ======================= CẤU HÌNH & THAM SỐ =======================
 CLIP_LEN = 64
@@ -48,6 +53,22 @@ dark_colors = {
 FALLBACK_BG_COLOR = dark_colors["dark_purple"]
 
 # ======================= CÁC HÀM TIỆN ÍCH =======================
+def send_gloss_to_t5(gloss, session_id="default"):
+    try:
+        payload = {"session_id": session_id, "glosses": [gloss]}
+        resp = requests.post(T5_URL, json=payload, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            sentence = data.get("sentence") or data.get("generated_sentence")
+            if sentence:
+                print(f"   ---> T5 sentence: {sentence}")
+            else:
+                print(f"   ---> T5 response: {data}")
+        else:
+            print(f"   ---> T5 HTTP {resp.status_code}: {resp.text}")
+    except Exception as e:
+        print(f"   ---> Error contacting T5: {e}")
+
 def load_gloss_map(path):
     gloss_map = {}
     with open(path, 'r', encoding='utf-8') as f:
@@ -175,6 +196,8 @@ def main():
                         confirmed_gloss_text = gloss
                         last_confirmed_class_id = majority_class_id
                         print(f"   ---> Recognized: {gloss}")
+
+                        Thread(target=send_gloss_to_t5, args=(gloss, "default"), daemon=True).start()
                         #a = [gloss_map.get(i) for i in raw_predictions_queue]
                         #print(a) 
                 else:

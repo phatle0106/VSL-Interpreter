@@ -1,0 +1,14 @@
+# Dockerfile.gpu
+FROM pytorch/pytorch:2.2.0-cuda11.8-cudnn8-runtime
+
+WORKDIR /app
+COPY T5_service.py /app/T5_service.py
+COPY requirements_t5.txt /app/requirements_t5.txt
+
+RUN pip install --upgrade pip
+RUN pip install -r /app/requirements_t5.txt
+
+ENV PORT=5001
+EXPOSE 5001
+
+CMD ["python", "T5_service.py"]
