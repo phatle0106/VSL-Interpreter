@@ -108,7 +108,7 @@ def run(configs,
             ])
     # ===============================
 
-    while steps < configs.max_steps and epoch < 200:
+    while steps < configs.max_steps and epoch < 350:
         epoch_start = time.time()
         print('Step {}/{}'.format(steps, configs.max_steps))
         print('-' * 10)
