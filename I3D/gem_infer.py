@@ -12,7 +12,7 @@ from collections import Counter
 import os
 from dotenv import load_dotenv
 import requests
-from threading import Thread
+from threading import Thread, Lock
 
 # Thêm Mediapipe
 import mediapipe as mp
@@ -24,6 +24,12 @@ load_dotenv()
 
 # Khai báo URL của T5 container (map ra localhost:5001)
 T5_URL = os.getenv("T5_URL", "http://localhost:5001/generate_sentence")
+LOCAL_MIN_GLOSSES = int(os.getenv("LOCAL_MIN_GLOSSES", "3"))  # local threshold
+SEND_TIMEOUT = 5
+
+# local buffers: session_id -> list of glosses not yet sent
+_local_buffers = {}
+_buffers_lock = Lock()
 
 # ======================= CẤU HÌNH & THAM SỐ =======================
 CLIP_LEN = 64
@@ -53,17 +59,48 @@ dark_colors = {
 FALLBACK_BG_COLOR = dark_colors["dark_purple"]
 
 # ======================= CÁC HÀM TIỆN ÍCH =======================
-def send_gloss_to_t5(gloss, session_id="default"):
+def _send_request(payload):
     try:
-        payload = {"session_id": session_id, "glosses": [gloss]}
-        resp = requests.post(T5_URL, json=payload, timeout=5)
+        resp = requests.post(T5_URL, json=payload, timeout=SEND_TIMEOUT)
         if resp.status_code == 200:
             data = resp.json()
-            print(f"   ---> T5 sentence: {data.get('sentence')}")
+            # If T5 says not enough glosses, do nothing (it will report session count)
+            if data.get("generated"):
+                sentence = data.get("sentence")
+                print(f"   ---> T5 sentence: {sentence}")
+            else:
+                # Not generated yet — show status
+                print(f"   ---> T5 not generated: {data.get('reason')}, count={data.get('session_gloss_count')}")
         else:
-            print("   ---> T5 error:", resp.status_code, resp.text)
+            print(f"   ---> T5 HTTP {resp.status_code}: {resp.text}")
     except Exception as e:
-        print("   ---> T5 request failed:", e)
+        print(f"   ---> Error contacting T5: {e}")
+
+def enqueue_gloss_and_maybe_send(gloss, session_id="default", reset=False):
+    """
+    Append to local buffer for session; if buffer length >= LOCAL_MIN_GLOSSES,
+    send payload (in background) and then clear local buffer for that session.
+    """
+    gloss = str(gloss).strip()
+    if gloss == "":
+        return
+
+    with _buffers_lock:
+        if reset or session_id not in _local_buffers:
+            _local_buffers[session_id] = []
+        _local_buffers[session_id].append(gloss)
+        current_len = len(_local_buffers[session_id])
+
+        # If we've reached threshold, prepare payload and clear local buffer
+        if current_len >= LOCAL_MIN_GLOSSES:
+            payload = {"session_id": session_id, "glosses": list(_local_buffers[session_id])}
+            _local_buffers[session_id] = []  # clear after taking
+        else:
+            payload = None
+
+    if payload:
+        # Send non-blocking so main loop isn't blocked
+        Thread(target=_send_request, args=(payload,), daemon=True).start()
 
 def load_gloss_map(path):
     gloss_map = {}
@@ -193,8 +230,8 @@ def main():
                         last_confirmed_class_id = majority_class_id
                         print(f"   ---> Recognized: {gloss}")
 
-                        # gọi non-blocking khi có gloss:
-                        Thread(target=send_gloss_to_t5, args=(gloss,"session1"), daemon=True).start()
+                        # Enqueue; gem_infer sẽ gửi lên T5 chỉ khi đã có >=3 gloss
+                        enqueue_gloss_and_maybe_send(gloss, session_id="default")
                         #a = [gloss_map.get(i) for i in raw_predictions_queue]
                         #print(a) 
                 else:
