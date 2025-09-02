@@ -33,12 +33,12 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Gemini API configuration
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={GEMINI_API_KEY}"
-MIN_GLOSSES_FOR_GEMINI = 3  # Minimum glosses before sending to Gemini
+MIN_GLOSSES_FOR_GEMINI = 5  # Minimum glosses before sending to Gemini
 SEND_TIMEOUT = 10
 
-STRIDE = 4
+STRIDE = 5
 VOTING_BAG_SIZE = 6
-THRESHOLD = 0.6
+THRESHOLD = 0.605
 BACKGROUND_CLASS_ID = -1
 
 # Báº­t/táº¯t Mediapipe
