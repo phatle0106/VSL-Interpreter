@@ -59,15 +59,11 @@ def send_gloss_to_t5(gloss, session_id="default"):
         resp = requests.post(T5_URL, json=payload, timeout=5)
         if resp.status_code == 200:
             data = resp.json()
-            sentence = data.get("sentence") or data.get("generated_sentence")
-            if sentence:
-                print(f"   ---> T5 sentence: {sentence}")
-            else:
-                print(f"   ---> T5 response: {data}")
+            print(f"   ---> T5 sentence: {data.get('sentence')}")
         else:
-            print(f"   ---> T5 HTTP {resp.status_code}: {resp.text}")
+            print("   ---> T5 error:", resp.status_code, resp.text)
     except Exception as e:
-        print(f"   ---> Error contacting T5: {e}")
+        print("   ---> T5 request failed:", e)
 
 def load_gloss_map(path):
     gloss_map = {}
@@ -197,7 +193,8 @@ def main():
                         last_confirmed_class_id = majority_class_id
                         print(f"   ---> Recognized: {gloss}")
 
-                        Thread(target=send_gloss_to_t5, args=(gloss, "default"), daemon=True).start()
+                        # gọi non-blocking khi có gloss:
+                        Thread(target=send_gloss_to_t5, args=(gloss,"session1"), daemon=True).start(
                         #a = [gloss_map.get(i) for i in raw_predictions_queue]
                         #print(a) 
                 else:
