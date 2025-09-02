@@ -194,7 +194,7 @@ def main():
                         print(f"   ---> Recognized: {gloss}")
 
                         # gọi non-blocking khi có gloss:
-                        Thread(target=send_gloss_to_t5, args=(gloss,"session1"), daemon=True).start(
+                        Thread(target=send_gloss_to_t5, args=(gloss,"session1"), daemon=True).start()
                         #a = [gloss_map.get(i) for i in raw_predictions_queue]
                         #print(a) 
                 else:
