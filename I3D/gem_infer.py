@@ -30,23 +30,11 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 STRIDE = 4
 VOTING_BAG_SIZE = 6
-THRESHOLD = 0.61
+THRESHOLD = 0.6
 BACKGROUND_CLASS_ID = -1
 
-# Cấu hình nền ảo
-USE_VIRTUAL_BG = True
-BG_PATH = 'background.jpg'
-USE_MEDIAPIPE = True  # <-- Bật/tắt Mediapipe
-dark_colors = {
-    "dark_gray":   (50, 50, 50),
-    "dark_blue":   (100, 50, 0),
-    "dark_green":  (50, 100, 50),
-    "dark_red":    (50, 50, 150),
-    "dark_purple": (100, 50, 100),
-    "dark_cyan":   (100, 100, 50),
-    "dark_brown":  (50, 80, 120),
-}
-FALLBACK_BG_COLOR = dark_colors["dark_gray"]
+# Bật/tắt Mediapipe
+USE_MEDIAPIPE = True
 
 # ======================= CÁC HÀM TIỆN ÍCH =======================
 def load_gloss_map(path):
@@ -85,10 +73,10 @@ def load_model():
 
 def frames_to_tensor(frames):
     frames_np = np.stack(frames, axis=0)                # (T,H,W,C)
-    frames_np = np.transpose(frames_np, (3, 0, 1, 2))   # (C,T,H,W)
+    frames_np = np.transpose(frames_np, (3, 0, 1, 2))  # (C,T,H,W)
     frames_tensor = torch.from_numpy(frames_np).float()
     frames_tensor = transform(frames_tensor)
-    frames_tensor = frames_tensor.unsqueeze(0)          # (1,C,T,H,W)
+    frames_tensor = frames_tensor.unsqueeze(0)         # (1,C,T,H,W)
     return frames_tensor.cuda()
 
 # ======================= VÒNG LẶP CHÍNH =======================
@@ -105,19 +93,10 @@ def main():
         print("Lỗi: Không thể mở webcam.")
         return
 
-    # Mediapipe chỉ khởi tạo nếu USE_MEDIAPIPE = True
+    # Khởi tạo Mediapipe nếu bật
     if USE_MEDIAPIPE:
         mp_selfie = mp.solutions.selfie_segmentation
-        selfie_seg = mp_selfie.SelfieSegmentation(model_selection=1)
-
-    # Chuẩn bị ảnh nền
-    bg_image = None
-    if USE_VIRTUAL_BG and os.path.exists(BG_PATH):
-        bg_image = cv2.imread(BG_PATH)
-    if bg_image is None:
-        bg_resized_static = None
-    else:
-        bg_resized_static = bg_image
+        selfie_seg = mp_selfie.SelfieSegmentation(model_selection=1)  # chọn model 0 nhanh hơn
 
     frame_buffer = []
     raw_predictions_queue = []
@@ -136,12 +115,6 @@ def main():
         if not ret:
             break
         H, W = frame.shape[:2]
-
-        # resize background fallback
-        if bg_resized_static is not None:
-            bg_resized = cv2.resize(bg_resized_static, (W, H))
-        else:
-            bg_resized = np.full((H, W, 3), FALLBACK_BG_COLOR, dtype=np.uint8)
 
         # ======== Inference (I3D) ========
         frame_proc = preprocess_frame(frame)
@@ -181,23 +154,13 @@ def main():
                     confirmed_gloss_text = ""
                     last_confirmed_class_id = None
 
-        # ======== Mediapipe background replace (nếu bật) ========
+        # ======== Nếu bật Mediapipe, xử lý ngầm ========
         if USE_MEDIAPIPE:
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = selfie_seg.process(rgb_frame)
-            mask = results.segmentation_mask  # float32 [0..1]
-
-            mask = cv2.GaussianBlur(mask, (7, 7), 0)
-            mask = (mask > 0.40).astype(np.uint8)
-            kernel = np.ones((5, 5), np.uint8)
-            mask = cv2.dilate(mask, kernel, iterations=1)
-
-            mask_3c = mask[..., None]
-            display_frame = np.where(mask_3c == 1, frame, bg_resized)
-        else:
-            display_frame = frame.copy()  # Nếu không dùng Mediapipe, hiển thị frame gốc
+            _ = selfie_seg.process(rgb_frame)  # chạy ngầm, không dùng mask để hiển thị
 
         # ======== Overlay text ========
+        display_frame = frame.copy()  # chỉ hiển thị webcam bình thường
         if len(frame_buffer) < CLIP_LEN:
             cv2.putText(display_frame, "Collecting frames...", (30, 50),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
