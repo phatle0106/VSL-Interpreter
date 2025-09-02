@@ -23,14 +23,15 @@ load_dotenv()
 # ======================= CẤU HÌNH & THAM SỐ =======================
 CLIP_LEN = 64
 NUM_CLASSES = 100
-WEIGHTS_PATH = 'archived/asl100/FINAL_nslt_100_iters=896_top1=65.89_top5=84.11_top10=89.92.pt'
+#WEIGHTS_PATH = 'archived/asl100\FINAL_nslt_100_iters=896_top1=65.89_top5=84.11_top10=89.92.pt'
+WEIGHTS_PATH = "checkpoint/nslt_100_002960_0.744.pt"
 MODE = 'rgb'
 GLOSS_PATH = r'preprocess/wlasl_class_list.txt'
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 STRIDE = 4
 VOTING_BAG_SIZE = 8
-THRESHOLD = 0.612
+THRESHOLD = 0.6
 BACKGROUND_CLASS_ID = -1
 
 # Cấu hình nền ảo
@@ -45,7 +46,7 @@ dark_colors = {
     "dark_cyan":   (100, 100, 50),
     "dark_brown":  (50, 80, 120),
 }
-FALLBACK_BG_COLOR = dark_colors["dark_purple"]
+FALLBACK_BG_COLOR = dark_colors["dark_red"]
 
 # ======================= CÁC HÀM TIỆN ÍCH =======================
 def load_gloss_map(path):

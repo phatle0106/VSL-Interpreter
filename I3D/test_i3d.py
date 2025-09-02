@@ -264,8 +264,10 @@ if __name__ == '__main__':
     num_classes = 100
     save_model = './checkpoints/'
 
-    root = 'D:\Workplace\Ori_WLASL\WLASL\data'
+    root = 'D:\Workplace\ASL\VSL-Interpreter\data'
 
     train_split = 'preprocess/nslt_{}.json'.format(num_classes)
-    weights = 'archived/asl100/FINAL_nslt_100_iters=896_top1=65.89_top5=84.11_top10=89.92.pt'
+#   weights = 'checkpoint/nslt_100_002960_0.744.pt'
+    weights = 'archived/asl100\FINAL_nslt_100_iters=896_top1=65.89_top5=84.11_top10=89.92.pt'
+
     run(mode=mode, root=root, save_model=save_model, train_split=train_split, weights=weights)
