@@ -13,38 +13,39 @@ import os
 from dotenv import load_dotenv
 import requests
 from threading import Thread, Lock
+import json
 
-# Thêm Mediapipe
+# ThÃªm Mediapipe
 import mediapipe as mp
 
 # =============================================================================
-# CẢNH BÁO BẢO MẬT QUAN TRỌNG
+# Cáº¢NH BÃO Báº¢O Máº¬T QUAN TRá»ŒNG
 # =============================================================================
 load_dotenv()
 
-# Khai báo URL của T5 container (map ra localhost:5001)
-T5_URL = os.getenv("T5_URL", "http://localhost:5001/generate_sentence")
+# Khai bÃ¡o Gemini API configuration
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={GEMINI_API_KEY}"
 LOCAL_MIN_GLOSSES = int(os.getenv("LOCAL_MIN_GLOSSES", "3"))  # local threshold
-SEND_TIMEOUT = 5
+SEND_TIMEOUT = 10
 
 # local buffers: session_id -> list of glosses not yet sent
 _local_buffers = {}
 _buffers_lock = Lock()
 
-# ======================= CẤU HÌNH & THAM SỐ =======================
+# ======================= Cáº¤U HÃŒNH & THAM Sá» =======================
 CLIP_LEN = 64
 NUM_CLASSES = 100
 WEIGHTS_PATH = 'archived/asl100/FINAL_nslt_100_iters=896_top1=65.89_top5=84.11_top10=89.92.pt'
 MODE = 'rgb'
 GLOSS_PATH = r'preprocess/wlasl_class_list.txt'
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 STRIDE = 4
 VOTING_BAG_SIZE = 8
 THRESHOLD = 0.612
 BACKGROUND_CLASS_ID = -1
 
-# Cấu hình nền ảo
+# Cáº¥u hÃ¬nh ná»n áº£o
 USE_VIRTUAL_BG = True
 BG_PATH = 'background.jpg'
 dark_colors = {
@@ -58,23 +59,71 @@ dark_colors = {
 }
 FALLBACK_BG_COLOR = dark_colors["dark_purple"]
 
-# ======================= CÁC HÀM TIỆN ÍCH =======================
-def _send_request(payload):
+# ======================= CÃC HÃ€M TIá»†N ÃCH =======================
+def _send_gemini_request(glosses_list):
+    """
+    Send glosses to Gemini API and get a meaningful sentence
+    """
+    if not GEMINI_API_KEY:
+        print("   ---> Error: GEMINI_API_KEY not found!")
+        return
+    
     try:
-        resp = requests.post(T5_URL, json=payload, timeout=SEND_TIMEOUT)
-        if resp.status_code == 200:
-            data = resp.json()
-            # If T5 says not enough glosses, do nothing (it will report session count)
-            if data.get("generated"):
-                sentence = data.get("sentence")
-                print(f"   ---> T5 sentence: {sentence}")
+        # Create the prompt for Gemini
+        glosses_text = " ".join(glosses_list)
+        prompt = f"""You are a sign language interpreter. I will give you a sequence of sign language glosses (individual sign words), and you need to convert them into a natural, grammatically correct English sentence that conveys the intended meaning.
+
+Glosses: {glosses_text}
+
+Please provide a natural English sentence that represents what the person is trying to communicate through these signs. Focus on the meaning rather than literal word order, as sign language grammar differs from English grammar.
+
+Respond with only the sentence, no additional explanation."""
+
+        # Prepare the request payload for Gemini API
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "text": prompt
+                        }
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.3,
+                "topK": 40,
+                "topP": 0.95,
+                "maxOutputTokens": 100,
+            }
+        }
+
+        # Make the API request
+        headers = {
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.post(GEMINI_API_URL, 
+                               json=payload, 
+                               headers=headers, 
+                               timeout=SEND_TIMEOUT)
+        
+        if response.status_code == 200:
+            result = response.json()
+            if 'candidates' in result and len(result['candidates']) > 0:
+                sentence = result['candidates'][0]['content']['parts'][0]['text'].strip()
+                print(f"   ---> Gemini sentence: {sentence}")
+                print(f"   ---> From glosses: {glosses_text}")
+                return sentence
             else:
-                # Not generated yet — show status
-                print(f"   ---> T5 not generated: {data.get('reason')}, count={data.get('session_gloss_count')}")
+                print("   ---> Gemini: No candidates returned")
         else:
-            print(f"   ---> T5 HTTP {resp.status_code}: {resp.text}")
+            print(f"   ---> Gemini HTTP {response.status_code}: {response.text}")
+            
     except Exception as e:
-        print(f"   ---> Error contacting T5: {e}")
+        print(f"   ---> Error contacting Gemini: {e}")
+    
+    return None
 
 def enqueue_gloss_and_maybe_send(gloss, session_id="default", reset=False):
     """
@@ -93,14 +142,14 @@ def enqueue_gloss_and_maybe_send(gloss, session_id="default", reset=False):
 
         # If we've reached threshold, prepare payload and clear local buffer
         if current_len >= LOCAL_MIN_GLOSSES:
-            payload = {"session_id": session_id, "glosses": list(_local_buffers[session_id])}
+            glosses_to_send = list(_local_buffers[session_id])
             _local_buffers[session_id] = []  # clear after taking
         else:
-            payload = None
+            glosses_to_send = None
 
-    if payload:
+    if glosses_to_send:
         # Send non-blocking so main loop isn't blocked
-        Thread(target=_send_request, args=(payload,), daemon=True).start()
+        Thread(target=_send_gemini_request, args=(glosses_to_send,), daemon=True).start()
 
 def load_gloss_map(path):
     gloss_map = {}
@@ -144,10 +193,11 @@ def frames_to_tensor(frames):
     frames_tensor = frames_tensor.unsqueeze(0)          # (1,C,T,H,W)
     return frames_tensor.cuda()
 
-# ======================= VÒNG LẶP CHÍNH =======================
+# ======================= VÃ'NG Láº¶P CHÃNH =======================
 def main():
     if not GEMINI_API_KEY:
-        print("CẢNH BÁO: Không tìm thấy GEMINI_API_KEY. Vui lòng tạo file .env và làm theo hướng dẫn ở đầu code.")
+        print("Cáº¢NH BÃO: KhÃ´ng tÃ¬m tháº¥y GEMINI_API_KEY. Vui lÃ²ng táº¡o file .env vÃ  thÃªm GEMINI_API_KEY=your_api_key_here")
+        print("Báº¡n cÃ³ thá»ƒ láº¥y API key táº¡i: https://makersuite.google.com/app/apikey")
         return
 
     gloss_map = load_gloss_map(GLOSS_PATH)
@@ -155,14 +205,14 @@ def main():
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
-        print("Lỗi: Không thể mở webcam.")
+        print("Lá»—i: KhÃ´ng thá»ƒ má»Ÿ webcam.")
         return
 
-    # ✅ Mediapipe segmentation (khởi tạo 1 lần)
+    # âœ… Mediapipe segmentation (khá»Ÿi táº¡o 1 láº§n)
     mp_selfie = mp.solutions.selfie_segmentation
     selfie_seg = mp_selfie.SelfieSegmentation(model_selection=1)
 
-    # Chuẩn bị ảnh nền
+    # Chuáº©n bá»‹ áº£nh ná»n
     bg_image = None
     if USE_VIRTUAL_BG and os.path.exists(BG_PATH):
         bg_image = cv2.imread(BG_PATH)
@@ -181,7 +231,9 @@ def main():
     fps_count = 0
     fps = 0
 
-    print("\nStarting real-time recognition. Press 'q' to quit.")
+    print(f"\nStarting real-time recognition with Gemini Flash 2.5.")
+    print(f"Will send glosses to Gemini after collecting {LOCAL_MIN_GLOSSES} signs.")
+    print("Press 'q' to quit.")
 
     while True:
         ret, frame = cap.read()
@@ -230,10 +282,8 @@ def main():
                         last_confirmed_class_id = majority_class_id
                         print(f"   ---> Recognized: {gloss}")
 
-                        # Enqueue; gem_infer sẽ gửi lên T5 chỉ khi đã có >=3 gloss
+                        # Enqueue; will send to Gemini when we have >= LOCAL_MIN_GLOSSES
                         enqueue_gloss_and_maybe_send(gloss, session_id="default")
-                        #a = [gloss_map.get(i) for i in raw_predictions_queue]
-                        #print(a) 
                 else:
                     confirmed_gloss_text = ""
                     last_confirmed_class_id = None
@@ -243,13 +293,13 @@ def main():
         results = selfie_seg.process(rgb_frame)
         mask = results.segmentation_mask  # float32 [0..1]
 
-        # Làm mượt mask
+        # LÃ m mÆ°á»£t mask
         mask = cv2.GaussianBlur(mask, (7, 7), 0)
 
-        # ✅ Threshold thấp hơn để mask rộng hơn
+        # âœ… Threshold tháº¥p hÆ¡n Ä'á»ƒ mask rá»™ng hÆ¡n
         mask = (mask > 0.40).astype(np.uint8)
 
-        # ✅ Nới rộng mask thêm bằng dilate
+        # âœ… Ná»›i rá»™ng mask thÃªm báº±ng dilate
         kernel = np.ones((5, 5), np.uint8)
         mask = cv2.dilate(mask, kernel, iterations=1)
 
@@ -264,6 +314,13 @@ def main():
         elif confirmed_gloss_text:
             cv2.putText(display_frame, confirmed_gloss_text, (30, 50),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3)
+
+        # Show current buffer count
+        with _buffers_lock:
+            current_buffer_size = len(_local_buffers.get("default", []))
+        
+        cv2.putText(display_frame, f'Glosses: {current_buffer_size}/{LOCAL_MIN_GLOSSES}', (30, 130),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
         fps_count += 1
         if time.time() - fps_time >= 1.0:
