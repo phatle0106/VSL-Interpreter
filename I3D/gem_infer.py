@@ -286,7 +286,7 @@ if 'current_sentence' not in st.session_state:
 # =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
-@st.cache_resource
+@st.experimental_singleton
 def load_gloss_map(path):
     """Load gloss mapping from file"""
     gloss_map = {}
@@ -307,7 +307,7 @@ def load_gloss_map(path):
         st.stop()
     return gloss_map
 
-@st.cache_resource
+@st.experimental_singleton
 def load_model():
     """Load the I3D model"""
     try:
@@ -478,36 +478,29 @@ def main():
         st.session_state.gloss_map = load_gloss_map(GLOSS_PATH)
         if st.session_state.model is not None:
             add_message("AI models loaded successfully!", 'system')
-    
-    # Layout
+# Layout 2 cột chính
     col1, col2 = st.columns([1.1, 0.9])
-    
+
     with col1:
         # Video container
         st.markdown('<div class="video-container">', unsafe_allow_html=True)
-        
-        # Camera input
         camera_input = st.camera_input("ASL Recognition Camera", key="asl_camera")
-        
+
         if camera_input is not None:
-            # Convert to OpenCV format
             image = Image.open(camera_input)
             frame = np.array(image)
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            
-            # Process frame for recognition
+
             if st.session_state.model is not None:
                 recognized_gloss = process_frame_for_recognition(frame)
-            
-            # Display frame status
+
             if len(st.session_state.frame_buffer) < CLIP_LEN:
                 st.info(f"Collecting frames... ({len(st.session_state.frame_buffer)}/{CLIP_LEN})")
             else:
                 st.success("Ready for recognition")
-        
+
         st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Status
+
         st.markdown(f"""
         <div class="info-panel">
             <div class="info-title">System Status</div>
@@ -518,69 +511,66 @@ def main():
             </div>
         </div>
         """, unsafe_allow_html=True)
-    
+
+    # 👉 Hàng nút tách riêng, KHÔNG đặt trong col2
+    spacer1, spacer2, col_btn1, col_btn2, col_btn3 = st.columns([1.1, 0.9, 1, 1, 1])
+
+    with col_btn1:
+        if st.button("🤖 Generate Sentence", disabled=len(st.session_state.glosses_buffer) == 0):
+            if st.session_state.glosses_buffer:
+                with st.spinner("Generating sentence..."):
+                    sentence = send_gemini_request(st.session_state.glosses_buffer)
+                    st.session_state.current_sentence = sentence
+                    st.session_state.generated_sentences.append({
+                        "glosses": list(st.session_state.glosses_buffer),
+                        "sentence": sentence,
+                        "timestamp": time.strftime("%H:%M:%S")
+                    })
+                    add_message(sentence, 'sentence')
+                    st.session_state.glosses_buffer = []
+                st.success("Sentence generated!")
+
+    with col_btn2:
+        st.markdown('<div class="danger-btn">', unsafe_allow_html=True)
+        if st.button("🗑️ Clear Glosses"):
+            st.session_state.glosses_buffer = []
+            add_message("Glosses cleared", 'system')
+            st.success("Glosses cleared!")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with col_btn3:
+        st.markdown('<div class="secondary-btn">', unsafe_allow_html=True)
+        if st.button("🔄 Reset All"):
+            st.session_state.glosses_buffer = []
+            st.session_state.messages = []
+            st.session_state.generated_sentences = []
+            st.session_state.current_sentence = "Ready to generate..."
+            st.session_state.frame_buffer = []
+            st.success("Session reset!")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # Panel bên phải
     with col2:
         st.markdown('<div class="control-panel">', unsafe_allow_html=True)
-        
-        # Control buttons
-        col_btn1, col_btn2, col_btn3 = st.columns(3)
-        
-        with col_btn1:
-            if st.button("🤖 Generate Sentence", disabled=len(st.session_state.glosses_buffer) == 0):
-                if st.session_state.glosses_buffer:
-                    with st.spinner("Generating sentence..."):
-                        sentence = send_gemini_request(st.session_state.glosses_buffer)
-                        st.session_state.current_sentence = sentence
-                        st.session_state.generated_sentences.append({
-                            "glosses": list(st.session_state.glosses_buffer),
-                            "sentence": sentence,
-                            "timestamp": time.strftime("%H:%M:%S")
-                        })
-                        add_message(sentence, 'sentence')
-                        st.session_state.glosses_buffer = []
-                    st.success("Sentence generated!")
-        
-        with col_btn2:
-            st.markdown('<div class="danger-btn">', unsafe_allow_html=True)
-            if st.button("🗑️ Clear Glosses"):
-                st.session_state.glosses_buffer = []
-                add_message("Glosses cleared", 'system')
-                st.success("Glosses cleared!")
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        with col_btn3:
-            st.markdown('<div class="secondary-btn">', unsafe_allow_html=True)
-            if st.button("🔄 Reset All"):
-                st.session_state.glosses_buffer = []
-                st.session_state.messages = []
-                st.session_state.generated_sentences = []
-                st.session_state.current_sentence = "Ready to generate..."
-                st.session_state.frame_buffer = []
-                st.success("Session reset!")
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Current glosses
+
         st.markdown(f"""
         <div class="info-panel">
             <div class="info-title">Current Glosses ({len(st.session_state.glosses_buffer)})</div>
             <div class="info-content">{' '.join(st.session_state.glosses_buffer) if st.session_state.glosses_buffer else 'No glosses collected yet'}</div>
         </div>
         """, unsafe_allow_html=True)
-        
-        # Latest sentence
+
         st.markdown(f"""
         <div class="info-panel sentence-display">
             <div class="info-title">Latest Generated Sentence</div>
             <div class="info-content">{st.session_state.current_sentence}</div>
         </div>
         """, unsafe_allow_html=True)
-        
-        # Messages
+
         st.markdown('<div class="messages-container">', unsafe_allow_html=True)
         st.markdown("**Activity Log:**")
-        
-        # Display messages
-        for msg in st.session_state.messages[-10:]:  # Show last 10 messages
+
+        for msg in st.session_state.messages[-10:]:
             msg_class = f"message {msg['type']}"
             if msg['type'] == 'gloss':
                 content = f"**Gloss:** {msg['text']}"
@@ -588,16 +578,17 @@ def main():
                 content = f"**Generated:** \"{msg['text']}\""
             else:
                 content = msg['text']
-            
+
             st.markdown(f"""
             <div class="{msg_class}">
                 <small>{msg['timestamp']}</small><br>
                 {content}
             </div>
             """, unsafe_allow_html=True)
-        
+
         st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
+
     
     # Instructions
     with st.expander("📋 How to Use"):
