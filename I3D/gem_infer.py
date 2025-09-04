@@ -14,9 +14,9 @@ import os
 from dotenv import load_dotenv
 import requests
 import json
-from threading import Thread, Lock
-import mediapipe as mp
 from PIL import Image
+import base64
+from io import BytesIO
 
 # =============================================================================
 # CONFIGURATION AND CONSTANTS
@@ -41,18 +41,205 @@ VOTING_BAG_SIZE = 6
 THRESHOLD = 0.605
 BACKGROUND_CLASS_ID = -1
 
-# Mediapipe settings
-USE_MEDIAPIPE = True
-
 # =============================================================================
 # STREAMLIT PAGE CONFIGURATION
 # =============================================================================
 st.set_page_config(
-    page_title="Sign Language Recognition",
+    page_title="ASL Recognition with AI Sentence Generation",
     page_icon="🤟",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
+
+# Custom CSS matching the HTML design
+st.markdown("""
+<style>
+    .main > div {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+    
+    .stApp {
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    }
+    
+    .video-container {
+        background: linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01)), #0b1220;
+        border: 1px solid rgba(148,163,184,.18);
+        border-radius: 24px;
+        padding: 0;
+        overflow: hidden;
+        box-shadow: 0 10px 25px rgba(0,0,0,.35);
+    }
+    
+    .video-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        border-bottom: 1px solid rgba(148,163,184,.18);
+        background: rgba(255,255,255,.02);
+    }
+    
+    .video-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 700;
+        color: #e5e7eb;
+    }
+    
+    .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #ef4444;
+        display: inline-block;
+    }
+    
+    .status-dot.connected {
+        background: #22c55e;
+        box-shadow: 0 0 10px rgba(34,197,94,.3);
+    }
+    
+    .badge {
+        font-size: 12px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(148,163,184,.18);
+        color: #8ea0b8;
+        background: rgba(255,255,255,.03);
+        margin: 0 4px;
+    }
+    
+    .badge.ok {
+        color: #16a34a;
+        border-color: rgba(22,163,74,.45);
+    }
+    
+    .control-panel {
+        background: linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01)), #0b1220;
+        border: 1px solid rgba(148,163,184,.18);
+        border-radius: 24px;
+        padding: 16px;
+        box-shadow: 0 10px 25px rgba(0,0,0,.35);
+    }
+    
+    .info-panel {
+        background: rgba(255,255,255,.03);
+        border: 1px solid rgba(148,163,184,.18);
+        border-radius: 12px;
+        padding: 16px;
+        margin: 8px 0;
+    }
+    
+    .info-title {
+        font-size: 12px;
+        color: #8ea0b8;
+        margin-bottom: 8px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    
+    .info-content {
+        font-size: 16px;
+        color: #e5e7eb;
+        font-family: 'Courier New', monospace;
+        min-height: 24px;
+        word-break: break-word;
+    }
+    
+    .sentence-display {
+        background: linear-gradient(135deg, rgba(34,197,94,.15), rgba(59,130,246,.1));
+        border: 2px solid rgba(34,197,94,.3);
+    }
+    
+    .sentence-display .info-content {
+        font-weight: 600;
+        font-size: 18px;
+        color: #22c55e;
+    }
+    
+    .messages-container {
+        background: rgba(255,255,255,.02);
+        border-radius: 12px;
+        padding: 16px;
+        max-height: 400px;
+        overflow-y: auto;
+        margin-top: 16px;
+    }
+    
+    .message {
+        margin: 8px 0;
+        padding: 12px 16px;
+        border-radius: 12px;
+        border: 1px solid rgba(148,163,184,.18);
+        max-width: 85%;
+    }
+    
+    .message.gloss {
+        background: rgba(168,85,247,.12);
+        border-color: rgba(168,85,247,.35);
+        margin-left: auto;
+        font-family: 'Courier New', monospace;
+        text-align: right;
+        color: #a855f7;
+    }
+    
+    .message.sentence {
+        background: rgba(34,197,94,.15);
+        border-color: rgba(34,197,94,.4);
+        margin: 0 auto;
+        font-weight: 600;
+        color: #22c55e;
+        text-align: center;
+    }
+    
+    .message.system {
+        background: rgba(59,130,246,.12);
+        border-color: rgba(59,130,246,.35);
+        margin: 0 auto;
+        color: #3b82f6;
+        font-size: 14px;
+        text-align: center;
+    }
+    
+    .stats-overlay {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        background: rgba(0,0,0,0.7);
+        color: white;
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-family: monospace;
+    }
+    
+    div[data-testid="stButton"] > button {
+        background: linear-gradient(135deg, #22c55e, #3b82f6);
+        color: white;
+        border: none;
+        border-radius: 10px;
+        padding: 8px 16px;
+        font-weight: 600;
+        transition: all 0.2s ease;
+    }
+    
+    div[data-testid="stButton"] > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(34,197,94,.3);
+    }
+    
+    .secondary-btn > button {
+        background: linear-gradient(135deg, #f59e0b, #d97706) !important;
+    }
+    
+    .danger-btn > button {
+        background: linear-gradient(135deg, #ef4444, #dc2626) !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # =============================================================================
 # SESSION STATE INITIALIZATION
@@ -84,6 +271,18 @@ if 'frame_counter' not in st.session_state:
 if 'generated_sentences' not in st.session_state:
     st.session_state.generated_sentences = []
 
+if 'messages' not in st.session_state:
+    st.session_state.messages = []
+
+if 'camera_active' not in st.session_state:
+    st.session_state.camera_active = False
+
+if 'ai_connected' not in st.session_state:
+    st.session_state.ai_connected = False
+
+if 'current_sentence' not in st.session_state:
+    st.session_state.current_sentence = "Ready to generate..."
+
 # =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
@@ -114,25 +313,17 @@ def load_model():
     try:
         with st.spinner("Loading I3D model..."):
             model = InceptionI3d(400, in_channels=3)
-            model.load_state_dict(torch.load('weights/rgb_imagenet.pt'))
+            model.load_state_dict(torch.load('weights/rgb_imagenet.pt', map_location='cpu'))
             model.replace_logits(NUM_CLASSES)
-            model.load_state_dict(torch.load(WEIGHTS_PATH))
-            model.cuda() if torch.cuda.is_available() else model.cpu()
+            model.load_state_dict(torch.load(WEIGHTS_PATH, map_location='cpu'))
+            if torch.cuda.is_available():
+                model.cuda()
             model = torch.nn.DataParallel(model)
             model.eval()
-            st.success("Model loaded successfully!")
             return model
     except Exception as e:
         st.error(f"Error loading model: {e}")
-        st.stop()
-
-@st.cache_resource
-def initialize_mediapipe():
-    """Initialize MediaPipe selfie segmentation"""
-    if USE_MEDIAPIPE:
-        mp_selfie = mp.solutions.selfie_segmentation
-        return mp_selfie.SelfieSegmentation(model_selection=1)
-    return None
+        return None
 
 def preprocess_frame(frame):
     """Preprocess frame for model input"""
@@ -143,11 +334,11 @@ def preprocess_frame(frame):
 def frames_to_tensor(frames):
     """Convert frames list to tensor"""
     transform = transforms.Compose([videotransforms.CenterCrop(224)])
-    frames_np = np.stack(frames, axis=0)                # (T,H,W,C)
-    frames_np = np.transpose(frames_np, (3, 0, 1, 2))  # (C,T,H,W)
+    frames_np = np.stack(frames, axis=0)
+    frames_np = np.transpose(frames_np, (3, 0, 1, 2))
     frames_tensor = torch.from_numpy(frames_np).float()
     frames_tensor = transform(frames_tensor)
-    frames_tensor = frames_tensor.unsqueeze(0)         # (1,C,T,H,W)
+    frames_tensor = frames_tensor.unsqueeze(0)
     
     if torch.cuda.is_available():
         return frames_tensor.cuda()
@@ -159,7 +350,6 @@ def send_gemini_request(glosses_list):
         return "Error: GEMINI_API_KEY not found!"
     
     try:
-        # Create the prompt for Gemini
         glosses_text = " ".join(glosses_list)
         prompt = f"""You are a sign language interpreter. I will give you a sequence of sign language glosses (individual sign words), and you need to convert them into a natural, grammatically correct English sentence that conveys the intended meaning.
 
@@ -169,17 +359,8 @@ Please provide a natural English sentence that represents what the person is try
 
 Respond with only the sentence, no additional explanation."""
 
-        # Prepare the request payload for Gemini API
         payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {
-                            "text": prompt
-                        }
-                    ]
-                }
-            ],
+            "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": 0.3,
                 "topK": 40,
@@ -188,10 +369,7 @@ Respond with only the sentence, no additional explanation."""
             }
         }
 
-        # Make the API request
-        headers = {
-            "Content-Type": "application/json"
-        }
+        headers = {"Content-Type": "application/json"}
         
         response = requests.post(GEMINI_API_URL, 
                                json=payload, 
@@ -204,16 +382,27 @@ Respond with only the sentence, no additional explanation."""
                 sentence = result['candidates'][0]['content']['parts'][0]['text'].strip()
                 return sentence
             else:
-                return "Gemini: No candidates returned"
+                return "Gemini: No response generated"
         else:
-            return f"Gemini HTTP {response.status_code}: {response.text}"
+            return f"Gemini HTTP {response.status_code}"
             
     except Exception as e:
-        return f"Error contacting Gemini: {e}"
+        return f"Error: {str(e)}"
+
+def add_message(text, msg_type='system'):
+    """Add message to session state"""
+    timestamp = time.strftime("%H:%M:%S")
+    st.session_state.messages.append({
+        'text': text,
+        'type': msg_type,
+        'timestamp': timestamp
+    })
 
 def process_frame_for_recognition(frame):
     """Process frame and return recognition result"""
-    # Preprocess frame
+    if st.session_state.model is None:
+        return None
+        
     frame_proc = preprocess_frame(frame)
     st.session_state.frame_buffer.append(frame_proc)
     
@@ -222,7 +411,6 @@ def process_frame_for_recognition(frame):
     
     st.session_state.frame_counter += 1
     
-    # Perform inference if we have enough frames
     if len(st.session_state.frame_buffer) == CLIP_LEN and st.session_state.frame_counter % STRIDE == 0:
         with torch.no_grad():
             input_tensor = frames_to_tensor(st.session_state.frame_buffer)
@@ -241,7 +429,6 @@ def process_frame_for_recognition(frame):
             if len(st.session_state.raw_predictions_queue) > VOTING_BAG_SIZE:
                 st.session_state.raw_predictions_queue.pop(0)
 
-        # Voting mechanism
         if len(st.session_state.raw_predictions_queue) == VOTING_BAG_SIZE:
             vote_counts = Counter(st.session_state.raw_predictions_queue)
             majority_class_id, max_count = vote_counts.most_common(1)[0]
@@ -252,8 +439,8 @@ def process_frame_for_recognition(frame):
                     st.session_state.confirmed_gloss_text = gloss
                     st.session_state.last_confirmed_class_id = majority_class_id
                     
-                    # Add to glosses buffer
                     st.session_state.glosses_buffer.append(gloss)
+                    add_message(f"Recognized: {gloss}", 'gloss')
                     return gloss
             else:
                 st.session_state.confirmed_gloss_text = ""
@@ -265,117 +452,173 @@ def process_frame_for_recognition(frame):
 # MAIN APP
 # =============================================================================
 def main():
-    st.title("🤟 Real-time Sign Language Recognition")
-    st.markdown("---")
+    # Header
+    st.markdown("""
+    <div class="video-header" style="margin-bottom: 20px;">
+        <div class="video-title">
+            <span class="status-dot connected"></span>
+            <span>ASL Recognition with AI Sentence Generation</span>
+        </div>
+        <div>
+            <span class="badge ok">I3D Ready</span>
+            <span class="badge ok">Gemini Ready</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Check API key
     if not GEMINI_API_KEY:
-        st.error("⚠️ GEMINI_API_KEY not found! Please create a .env file with GEMINI_API_KEY=your_api_key_here")
+        st.error("⚠️ GEMINI_API_KEY not found! Please create a .env file with your API key.")
         st.markdown("Get your API key at: https://makersuite.google.com/app/apikey")
-        st.stop()
+        return
     
     # Load model and gloss map
     if st.session_state.model is None:
         st.session_state.model = load_model()
         st.session_state.gloss_map = load_gloss_map(GLOSS_PATH)
+        if st.session_state.model is not None:
+            add_message("AI models loaded successfully!", 'system')
     
-    # Sidebar controls
-    with st.sidebar:
-        st.header("🎛️ Controls")
-        
-        # Camera controls
-        st.subheader("📹 Camera")
-        camera_enabled = st.checkbox("Enable Camera", value=False)
-        
-        # Recognition settings
-        st.subheader("⚙️ Settings")
-        threshold = st.slider("Recognition Threshold", 0.1, 1.0, THRESHOLD, 0.01)
-        
-        # Gloss buffer controls
-        st.subheader("📝 Gloss Buffer")
-        st.write(f"Current glosses: **{len(st.session_state.glosses_buffer)}**")
-        
-        if st.button("🗑️ Clear Glosses"):
-            st.session_state.glosses_buffer = []
-            st.success("Glosses cleared!")
-        
-        # Generate sentence button
-        if st.button("🤖 Generate Sentence", disabled=len(st.session_state.glosses_buffer) == 0):
-            if st.session_state.glosses_buffer:
-                with st.spinner("Generating sentence with Gemini..."):
-                    sentence = send_gemini_request(st.session_state.glosses_buffer)
-                    st.session_state.generated_sentences.append({
-                        "glosses": " ".join(st.session_state.glosses_buffer),
-                        "sentence": sentence,
-                        "timestamp": time.strftime("%H:%M:%S")
-                    })
-                    st.session_state.glosses_buffer = []  # Clear buffer after generating
-                st.success("Sentence generated!")
-    
-    # Main content area
-    col1, col2 = st.columns([2, 1])
+    # Layout
+    col1, col2 = st.columns([1.1, 0.9])
     
     with col1:
-        st.subheader("📹 Webcam Feed")
+        # Video container
+        st.markdown('<div class="video-container">', unsafe_allow_html=True)
         
-        if camera_enabled:
-            # Camera input
-            camera_input = st.camera_input("Take a picture")
+        # Camera input
+        camera_input = st.camera_input("ASL Recognition Camera", key="asl_camera")
+        
+        if camera_input is not None:
+            # Convert to OpenCV format
+            image = Image.open(camera_input)
+            frame = np.array(image)
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             
-            if camera_input is not None:
-                # Convert to OpenCV format
-                image = Image.open(camera_input)
-                frame = np.array(image)
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                
-                # Process frame for recognition
+            # Process frame for recognition
+            if st.session_state.model is not None:
                 recognized_gloss = process_frame_for_recognition(frame)
-                
-                # Display current recognition
-                if st.session_state.confirmed_gloss_text:
-                    st.success(f"✅ **Recognized:** {st.session_state.confirmed_gloss_text}")
-                
-                # Show frame status
-                if len(st.session_state.frame_buffer) < CLIP_LEN:
-                    st.info(f"Collecting frames... ({len(st.session_state.frame_buffer)}/{CLIP_LEN})")
-        else:
-            st.info("Enable camera to start recognition")
+            
+            # Display frame status
+            if len(st.session_state.frame_buffer) < CLIP_LEN:
+                st.info(f"Collecting frames... ({len(st.session_state.frame_buffer)}/{CLIP_LEN})")
+            else:
+                st.success("Ready for recognition")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Status
+        st.markdown(f"""
+        <div class="info-panel">
+            <div class="info-title">System Status</div>
+            <div class="info-content">
+                Glosses Collected: {len(st.session_state.glosses_buffer)} | 
+                Sentences Generated: {len(st.session_state.generated_sentences)} | 
+                Frame Buffer: {len(st.session_state.frame_buffer)}/{CLIP_LEN}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col2:
-        st.subheader("📝 Current Glosses")
+        st.markdown('<div class="control-panel">', unsafe_allow_html=True)
         
-        if st.session_state.glosses_buffer:
-            for i, gloss in enumerate(st.session_state.glosses_buffer, 1):
-                st.write(f"{i}. {gloss}")
-        else:
-            st.write("No glosses collected yet")
-    
-    # Generated sentences section
-    if st.session_state.generated_sentences:
-        st.markdown("---")
-        st.subheader("🤖 Generated Sentences")
+        # Control buttons
+        col_btn1, col_btn2, col_btn3 = st.columns(3)
         
-        for i, result in enumerate(reversed(st.session_state.generated_sentences[-5:]), 1):
-            with st.expander(f"Sentence {len(st.session_state.generated_sentences) - i + 1} ({result['timestamp']})"):
-                st.write(f"**Glosses:** {result['glosses']}")
-                st.write(f"**Sentence:** {result['sentence']}")
+        with col_btn1:
+            if st.button("🤖 Generate Sentence", disabled=len(st.session_state.glosses_buffer) == 0):
+                if st.session_state.glosses_buffer:
+                    with st.spinner("Generating sentence..."):
+                        sentence = send_gemini_request(st.session_state.glosses_buffer)
+                        st.session_state.current_sentence = sentence
+                        st.session_state.generated_sentences.append({
+                            "glosses": list(st.session_state.glosses_buffer),
+                            "sentence": sentence,
+                            "timestamp": time.strftime("%H:%M:%S")
+                        })
+                        add_message(sentence, 'sentence')
+                        st.session_state.glosses_buffer = []
+                    st.success("Sentence generated!")
+        
+        with col_btn2:
+            st.markdown('<div class="danger-btn">', unsafe_allow_html=True)
+            if st.button("🗑️ Clear Glosses"):
+                st.session_state.glosses_buffer = []
+                add_message("Glosses cleared", 'system')
+                st.success("Glosses cleared!")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with col_btn3:
+            st.markdown('<div class="secondary-btn">', unsafe_allow_html=True)
+            if st.button("🔄 Reset All"):
+                st.session_state.glosses_buffer = []
+                st.session_state.messages = []
+                st.session_state.generated_sentences = []
+                st.session_state.current_sentence = "Ready to generate..."
+                st.session_state.frame_buffer = []
+                st.success("Session reset!")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Current glosses
+        st.markdown(f"""
+        <div class="info-panel">
+            <div class="info-title">Current Glosses ({len(st.session_state.glosses_buffer)})</div>
+            <div class="info-content">{' '.join(st.session_state.glosses_buffer) if st.session_state.glosses_buffer else 'No glosses collected yet'}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Latest sentence
+        st.markdown(f"""
+        <div class="info-panel sentence-display">
+            <div class="info-title">Latest Generated Sentence</div>
+            <div class="info-content">{st.session_state.current_sentence}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Messages
+        st.markdown('<div class="messages-container">', unsafe_allow_html=True)
+        st.markdown("**Activity Log:**")
+        
+        # Display messages
+        for msg in st.session_state.messages[-10:]:  # Show last 10 messages
+            msg_class = f"message {msg['type']}"
+            if msg['type'] == 'gloss':
+                content = f"**Gloss:** {msg['text']}"
+            elif msg['type'] == 'sentence':
+                content = f"**Generated:** \"{msg['text']}\""
+            else:
+                content = msg['text']
+            
+            st.markdown(f"""
+            <div class="{msg_class}">
+                <small>{msg['timestamp']}</small><br>
+                {content}
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
     
     # Instructions
-    st.markdown("---")
-    st.subheader("ℹ️ How to Use")
-    st.markdown("""
-    1. **Enable the camera** using the checkbox in the sidebar
-    2. **Perform sign language** in front of the camera
-    3. **Watch glosses** appear in the right column as they are recognized
-    4. **Generate sentence** by clicking the button when you have enough glosses
-    5. **View generated sentences** in the bottom section
-    
-    **Tips:**
-    - Make sure you have good lighting
-    - Keep your hands clearly visible
-    - Wait for the frame buffer to fill up before starting
-    - Adjust the recognition threshold if needed
-    """)
+    with st.expander("📋 How to Use"):
+        st.markdown("""
+        **Getting Started:**
+        1. **Allow camera access** when prompted by your browser
+        2. **Position yourself** clearly in front of the camera
+        3. **Perform sign language** - glosses will be recognized automatically
+        4. **Generate sentences** by clicking the button when you have enough glosses
+        
+        **Tips:**
+        - Ensure good lighting for better recognition
+        - Wait for the frame buffer to fill (64 frames)
+        - Clear glosses to start a new sequence
+        - Use Reset All to clear everything
+        
+        **Recognition Process:**
+        - The system uses I3D neural network for real-time ASL recognition
+        - Glosses are collected automatically as you sign
+        - Gemini AI converts gloss sequences into natural sentences
+        """)
 
 if __name__ == '__main__':
     main()
