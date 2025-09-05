@@ -17,6 +17,7 @@ import json
 from PIL import Image
 import base64
 from io import BytesIO
+from ultralytics import YOLO
 
 # =============================================================================
 # CONFIGURATION AND CONSTANTS
@@ -432,7 +433,6 @@ def process_frame_for_recognition(frame):
         if len(st.session_state.raw_predictions_queue) == VOTING_BAG_SIZE:
             vote_counts = Counter(st.session_state.raw_predictions_queue)
             majority_class_id, max_count = vote_counts.most_common(1)[0]
-            
             if majority_class_id != BACKGROUND_CLASS_ID and max_count > VOTING_BAG_SIZE / 2:
                 if majority_class_id != st.session_state.last_confirmed_class_id:
                     gloss = st.session_state.gloss_map.get(majority_class_id, f'Class_{majority_class_id}')
@@ -441,17 +441,61 @@ def process_frame_for_recognition(frame):
                     
                     st.session_state.glosses_buffer.append(gloss)
                     add_message(f"Recognized: {gloss}", 'gloss')
+                    st.session_state.raw_predictions_queue = []
                     return gloss
             else:
                 st.session_state.confirmed_gloss_text = ""
                 st.session_state.last_confirmed_class_id = None
     
     return None
+# if "yolo_seg" not in st.session_state:
+#     st.session_state.yolo_seg = YOLO("yolov8m-seg.pt")
+
+# Hàm segment người + thay background
+def segment_person(frame, bg_color=(0, 0, 139)):
+    # results = st.session_state.yolo_seg(frame, verbose=False)
+    # output = np.full_like(frame, bg_color, dtype=np.uint8)
+
+    # for r in results:
+    #     if r.masks is not None:
+    #         for mask, cls in zip(r.masks.data, r.boxes.cls):
+    #             if int(cls) == 0:  # "person"
+    #                 mask = mask.cpu().numpy()
+    #                 mask = cv2.resize(mask, (frame.shape[1], frame.shape[0]))
+    #                 mask = (mask > 0.4).astype(np.uint8)
+    #                 for c in range(3):
+    #                     output[:, :, c] = frame[:, :, c] * mask + output[:, :, c] * (1 - mask)
+
+    return frame
 
 # =============================================================================
 # MAIN APP
-# =============================================================================
+# =============================================================================from ultralytics import YOLO
+
+# Load YOLOv8-small segmentation model (once)
+
+
+
 def main():
+    # --- Global CSS (font setup) ---
+    st.markdown("""
+    <style>
+        * {
+            font-family: "Segoe UI", "Roboto", "Helvetica", sans-serif;
+        }
+        .info-title {
+            font-weight: 600;
+            font-size: 16px;
+        }
+        .info-content {
+            font-size: 14px;
+        }
+        .messages-container {
+            font-size: 13px;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
     # Header
     st.markdown("""
     <div class="video-header" style="margin-bottom: 20px;">
@@ -465,39 +509,98 @@ def main():
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
+    fps_time = time.time()
+    fps_count = 0
+    fps = 0
+
     # Check API key
     if not GEMINI_API_KEY:
         st.error("⚠️ GEMINI_API_KEY not found! Please create a .env file with your API key.")
         st.markdown("Get your API key at: https://makersuite.google.com/app/apikey")
         return
-    
-    # Load model and gloss map
+
+    # Load model + gloss map
     if st.session_state.model is None:
         st.session_state.model = load_model()
         st.session_state.gloss_map = load_gloss_map(GLOSS_PATH)
         if st.session_state.model is not None:
             add_message("AI models loaded successfully!", 'system')
-# Layout 2 cột chính
+
+    # Init session state
+    if "capture_active" not in st.session_state:
+        st.session_state.capture_active = False
+    if "frame_counter" not in st.session_state:
+        st.session_state.frame_counter = 0
+    if "frame_buffer" not in st.session_state:
+        st.session_state.frame_buffer = []
+    if "raw_predictions_queue" not in st.session_state:
+        st.session_state.raw_predictions_queue = []
+    if "last_confirmed_class_id" not in st.session_state:
+        st.session_state.last_confirmed_class_id = None
+    if "confirmed_gloss_text" not in st.session_state:
+        st.session_state.confirmed_gloss_text = ""
+
+    # Layout
     col1, col2 = st.columns([1.1, 0.9])
 
     with col1:
-        # Video container
         st.markdown('<div class="video-container">', unsafe_allow_html=True)
-        camera_input = st.camera_input("ASL Recognition Camera", key="asl_camera")
 
-        if camera_input is not None:
-            image = Image.open(camera_input)
-            frame = np.array(image)
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-
-            if st.session_state.model is not None:
-                recognized_gloss = process_frame_for_recognition(frame)
-
-            if len(st.session_state.frame_buffer) < CLIP_LEN:
-                st.info(f"Collecting frames... ({len(st.session_state.frame_buffer)}/{CLIP_LEN})")
+        # --- Toggle Start/Stop button ---
+        if st.button("▶️ Start / ⏹ Stop"):
+            if st.session_state.capture_active:
+                # Stop
+                st.session_state.capture_active = False
+                st.session_state.frame_buffer = []
+                st.session_state.raw_predictions_queue = []
+                st.session_state.last_confirmed_class_id = None
+                st.success("🛑 Capture stopped, buffers reset.")
             else:
-                st.success("Ready for recognition")
+                # Start
+                st.session_state.capture_active = True
+                st.session_state.frame_buffer = []
+                st.session_state.raw_predictions_queue = []
+                st.session_state.glosses_buffer = []
+                st.session_state.last_confirmed_class_id = None
+                st.session_state.frame_counter = 0
+                st.success("▶️ Capture started.")
+
+        # --- Camera loop ---
+        frame_placeholder = st.empty()
+        if st.session_state.capture_active:
+            cap = cv2.VideoCapture(0)
+            if not cap.isOpened():
+                st.error("Không mở được camera. Vui lòng kiểm tra thiết bị.")
+                return
+
+            while st.session_state.capture_active:
+                ret, frame = cap.read()
+                if not ret:
+                    st.warning("Không đọc được frame từ camera.")
+                    break
+
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+                # --- Segment + replace background ---
+                frame_processed = segment_person(frame_rgb)
+                fps_count += 1
+                if time.time() - fps_time >= 1.0:
+                    fps = fps_count
+                    fps_count = 0
+                    fps_time = time.time()
+                # Recognition
+                recognized_gloss = process_frame_for_recognition(frame_processed)
+                display_frame = frame_processed.copy()
+
+                # Hiển thị video
+                cv2.putText(display_frame, f'FPS: {fps}', (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                frame_placeholder.image(display_frame, channels="RGB")
+
+                # Hiển thị gloss nếu có
+                if recognized_gloss:
+                    st.success(f"Recognized gloss: {recognized_gloss}")
+
+            cap.release()
 
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -505,15 +608,15 @@ def main():
         <div class="info-panel">
             <div class="info-title">System Status</div>
             <div class="info-content">
+                Capture: {"Active" if st.session_state.capture_active else "Stopped"} | 
                 Glosses Collected: {len(st.session_state.glosses_buffer)} | 
-                Sentences Generated: {len(st.session_state.generated_sentences)} | 
-                Frame Buffer: {len(st.session_state.frame_buffer)}/{CLIP_LEN}
+                Sentences Generated: {len(st.session_state.generated_sentences) if 'generated_sentences' in st.session_state else 0}
             </div>
         </div>
         """, unsafe_allow_html=True)
 
-    # 👉 Hàng nút tách riêng, KHÔNG đặt trong col2
-    spacer1, spacer2, col_btn1, col_btn2, col_btn3 = st.columns([1.1, 0.9, 1, 1, 1])
+    # --- Control buttons ---
+    spacer1, spacer2, col_btn1, col_btn2 = st.columns([1.1, 0.9, 1, 1])
 
     with col_btn1:
         if st.button("🤖 Generate Sentence", disabled=len(st.session_state.glosses_buffer) == 0):
@@ -521,35 +624,29 @@ def main():
                 with st.spinner("Generating sentence..."):
                     sentence = send_gemini_request(st.session_state.glosses_buffer)
                     st.session_state.current_sentence = sentence
+                    if "generated_sentences" not in st.session_state:
+                        st.session_state.generated_sentences = []
                     st.session_state.generated_sentences.append({
                         "glosses": list(st.session_state.glosses_buffer),
                         "sentence": sentence,
                         "timestamp": time.strftime("%H:%M:%S")
                     })
                     add_message(sentence, 'sentence')
-                    st.session_state.glosses_buffer = []
-                st.success("Sentence generated!")
+                st.success("✅ Sentence generated!")
 
     with col_btn2:
-        st.markdown('<div class="danger-btn">', unsafe_allow_html=True)
-        if st.button("🗑️ Clear Glosses"):
-            st.session_state.glosses_buffer = []
-            add_message("Glosses cleared", 'system')
-            st.success("Glosses cleared!")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with col_btn3:
-        st.markdown('<div class="secondary-btn">', unsafe_allow_html=True)
         if st.button("🔄 Reset All"):
             st.session_state.glosses_buffer = []
             st.session_state.messages = []
             st.session_state.generated_sentences = []
             st.session_state.current_sentence = "Ready to generate..."
             st.session_state.frame_buffer = []
-            st.success("Session reset!")
-        st.markdown('</div>', unsafe_allow_html=True)
+            st.session_state.raw_predictions_queue = []
+            st.session_state.last_confirmed_class_id = None
+            st.session_state.capture_active = False
+            st.success("🔄 Session reset!")
 
-    # Panel bên phải
+    # --- Right panel ---
     with col2:
         st.markdown('<div class="control-panel">', unsafe_allow_html=True)
 
@@ -563,7 +660,7 @@ def main():
         st.markdown(f"""
         <div class="info-panel sentence-display">
             <div class="info-title">Latest Generated Sentence</div>
-            <div class="info-content">{st.session_state.current_sentence}</div>
+            <div class="info-content">{st.session_state.current_sentence if 'current_sentence' in st.session_state else 'Ready to generate...'}</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -589,26 +686,20 @@ def main():
         st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    
-    # Instructions
+    # --- Instructions ---
     with st.expander("📋 How to Use"):
         st.markdown("""
         **Getting Started:**
-        1. **Allow camera access** when prompted by your browser
-        2. **Position yourself** clearly in front of the camera
-        3. **Perform sign language** - glosses will be recognized automatically
-        4. **Generate sentences** by clicking the button when you have enough glosses
-        
+        1. Bấm "Start / Stop" để bật camera và bắt đầu capture
+        2. Khi capture đang chạy → hệ thống sẽ gom glosses bằng sliding window
+        3. Bấm "Start / Stop" lần nữa để dừng capture
+        4. Nhấn "Generate Sentence" để gửi glosses sang Gemini và sinh câu
+        5. Dùng "Reset All" để xóa toàn bộ dữ liệu cũ
+
         **Tips:**
-        - Ensure good lighting for better recognition
-        - Wait for the frame buffer to fill (64 frames)
-        - Clear glosses to start a new sequence
-        - Use Reset All to clear everything
-        
-        **Recognition Process:**
-        - The system uses I3D neural network for real-time ASL recognition
-        - Glosses are collected automatically as you sign
-        - Gemini AI converts gloss sequences into natural sentences
+        - Cần đủ 64 frames để model I3D predict được gloss
+        - Hệ thống chỉ hiển thị gloss khi đã được confirm qua voting bag
+        - Reset All nếu muốn bắt đầu lại từ đầu
         """)
 
 if __name__ == '__main__':

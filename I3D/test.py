@@ -1,2 +1,3 @@
-import streamlit as slt
-print(slt.__version__)
+from ultralytics import YOLO
+model = YOLO("yolov8n-seg.pt")
+print("Ultralytics loaded successfully!")
